@@ -9,20 +9,20 @@ import math
 import pydeck as pdk
 from geopy.geocoders import Nominatim
 from geopy.exc import GeocoderTimedOut, GeocoderServiceError
-# WICHTIG: Die Library streamlit-js-eval muss in der requirements.txt stehen
+# WICHTIG: Die Library streamlit-js-eval muss zwingend in der requirements.txt stehen
 from streamlit_js_eval import streamlit_js_eval, get_geolocation
 
 # --- 1. DATENMANAGEMENT & KONFIGURATION ---
-# Wir nutzen einen eindeutigen Dateinamen für diese Cloud-Version
-CONFIG_FILE = "alhambra_tsi_v6195_full_cloud.json"
+# Eindeutiger Dateiname für diese Version zur Vermeidung von Cache-Konflikten
+CONFIG_FILE = "alhambra_tsi_v6196_gps_fix_full.json"
 
 def save_config(config_data):
-    """Speichert Benutzereinstellungen wie den API-Key lokal."""
+    """Speichert Benutzereinstellungen wie den API-Key lokal auf der Instanz."""
     with open(CONFIG_FILE, "w") as f:
         json.dump(config_data, f)
 
 def load_config():
-    """Lädt gespeicherte Daten oder gibt ein leeres Template zurück."""
+    """Lädt die gespeicherte Konfiguration oder gibt ein leeres Dictionary zurück."""
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, "r") as f:
@@ -32,7 +32,7 @@ def load_config():
     return {}
 
 def format_de(wert, n=2):
-    """Konvertiert Floats in das deutsche Zahlenformat (Komma-Trennung)."""
+    """Formatiert Zahlenwerte nach deutschem Standard (Komma statt Punkt)."""
     if wert is None:
         return "0,00"
     try:
@@ -41,72 +41,69 @@ def format_de(wert, n=2):
     except:
         return "0,00"
 
-# --- 2. PHYSIKALISCHE TSI-ENGINE ---
+# --- 2. PHYSIKALISCHE TSI-ENGINE (Seat Alhambra 7N Spezifikation) ---
 class AlhambraTSIMasterMobile:
     """
-    Diese Klasse bildet die Fahrphysik eines Seat Alhambra 7N 2.0 TSI nach.
+    Diese Klasse bildet die Fahrphysik eines Seat Alhambra 2.0 TSI nach.
     Berechnet Luftwiderstand, Rollwiderstand und energetischen Wirkungsgrad.
     """
     def __init__(self):
-        # Basis-Konstanten des Fahrzeugs
+        # Fahrzeugspezifische Konstanten
         self.tank_kapazitaet = 70.0 
         self.leergewicht = 1790    # kg
         self.stirnflaeche = 2.95   # m²
         self.cw_wert = 0.32
-        # Dynamischer User-Agent für Cloud-Umgebungen (Nominatim Schutz)
-        timestamp = int(time.time())
-        self.geolocator = Nominatim(user_agent=f"alhambra_tsi_pro_v6195_{timestamp}")
+        # Dynamischer User-Agent für Cloud-Umgebungen zur Vermeidung von IP-Sperren
+        timestamp_id = int(time.time())
+        self.geolocator = Nominatim(user_agent=f"alhambra_tsi_enforcer_v6196_{timestamp_id}")
 
     def berechne_verbrauch(self, dist_m, dauer_s, personen):
         """
-        Physikalische Verbrauchsermittlung (Benzin).
+        Physikalische Verbrauchsermittlung basierend auf Lastzuständen.
         """
-        # Gesamtgewicht inkl. Insassen (ca. 80kg pro Person)
+        # Gesamtgewicht inkl. Insassen (ca. 80kg pro Person inkl. Gepäck)
         gesamt_gewicht = self.leergewicht + (personen * 80)
         
-        # Durchschnittsgeschwindigkeit in m/s
+        # Durchschnittsgeschwindigkeit in m/s ermitteln
         v_avg = (dist_m / dauer_s) if dauer_s > 0 else 0
         
-        # Wirkungsgrad des TSI-Aggregats (Benzin ca. 18-24%)
-        # Bei höheren Lasten/Geschwindigkeiten ist der Wirkungsgrad meist besser
+        # Wirkungsgrad des TSI-Aggregats (Benzinmotor-Kennfeld-Vereinfachung)
         effizienz = 0.24 if v_avg > 15 else 0.18 
         
-        # Berechnung der Widerstandskräfte
-        # Luftwiderstand: 0.5 * rho * v² * cw * A
+        # Berechnung der Widerstände: Luft- und Rollwiderstand
         f_luft = 0.5 * 1.225 * (v_avg ** 2) * self.cw_wert * self.stirnflaeche
-        # Rollwiderstand: m * g * Cr
         f_roll = gesamt_gewicht * 9.81 * 0.015
         
-        # Benötigte Energie in Joule (Wattsekunden)
+        # Energetischer Gesamtaufwand in Joule
         energie_j = ((f_luft + f_roll) * dist_m) / effizienz
         
-        # Umrechnung in Liter (Brennwert Super benzin: ca. 32,7 MJ/Liter)
+        # Umrechnung von Joule in Liter (Brennwert Super: ca. 32,7 MJ/L)
         liter = energie_j / 32.7e6
         
-        # Untergrenze (Alhambra TSI verbraucht real selten unter 9,5L/100km)
-        mindest_verbrauch = (dist_m / 1000) * 0.095
+        # Realistischer Mindestverbrauch für den Alhambra (9.5L/100km Referenz)
+        mindest_v = (dist_m / 1000) * 0.095
         
-        return max(liter, mindest_verbrauch)
+        return max(liter, mindest_v)
 
     @st.cache_data(show_spinner=False)
     def get_coords_cached(_self, adresse):
-        """Geokodierung mit Timeout-Sicherung für Cloud-Server."""
+        """Geokodierung mit künstlicher Verzögerung für API-Compliance."""
         if not adresse:
             return None
         try:
-            # Nominatim erlaubt nur 1 Request/Sekunde -> Wir warten 1.6s zur Sicherheit
+            # Nominatim Policy: Max 1 Request/Sekunde
             time.sleep(1.6)
             location = _self.geolocator.geocode(adresse, timeout=15)
             if location:
                 return (location.latitude, location.longitude)
             return None
         except Exception as e:
-            st.error(f"Geokodierung fehlgeschlagen: {e}")
+            st.error(f"📍 Geokodierungs-Fehler: {e}")
             return None
 
     def get_route(self, punkte):
-        """Abfrage der OSRM Routing-Engine."""
-        # Punkte in Lng,Lat Format umwandeln
+        """Abfrage der OSRM Routing Engine für Fahrzeit und Distanz."""
+        # Koordinaten für OSRM im Format Lng,Lat zusammenfügen
         loc_str = ";".join([f"{p[1]},{p[0]}" for p in punkte])
         url = f"http://router.project-osrm.org/route/v1/driving/{loc_str}?overview=full&geometries=polyline"
         try:
@@ -116,29 +113,29 @@ class AlhambraTSIMasterMobile:
                 return data['routes'][0]
             return None
         except Exception as e:
-            st.error(f"Routing-Fehler (OSRM): {e}")
+            st.error(f"🛣️ Routing-Verbindungsfehler: {e}")
             return None
 
-# --- 3. STREAMLIT UI KONFIGURATION ---
+# --- 3. STREAMLIT UI SETUP ---
 st.set_page_config(
-    page_title="Alhambra TSI Fuel Master Pro",
+    page_title="Alhambra TSI Pro V6.19.6",
     layout="wide",
     page_icon="🚐"
 )
 
-# Initialisierung der Engine und laden gespeicherter Daten
+# Initialisierung
 saved_data = load_config()
 engine = AlhambraTSIMasterMobile()
 
-# WICHTIG: Session State für Cloud-Stabilität
+# Persistenz des Session States für Cloud-Deployment
 if 'results' not in st.session_state:
     st.session_state.results = None
 
-# --- 4. SIDEBAR (STEUERUNG) ---
+# --- 4. SIDEBAR (GPS-ENFORCER & PARAMETER) ---
 with st.sidebar:
-    st.header("⚙️ Zentrale Steuerung")
+    st.header("⚙️ System-Steuerung")
     
-    # API-Key Management
+    # API-Key Management mit Callback
     def on_key_change():
         saved_data["api_key"] = st.session_state.api_key_input
         save_config(saved_data)
@@ -146,64 +143,72 @@ with st.sidebar:
     tk_key = st.text_input(
         "Tankerkönig API Key", 
         value=saved_data.get("api_key", ""), 
-        type="password",
-        key="api_key_input",
+        type="password", 
+        key="api_key_input", 
         on_change=on_key_change
     )
     
     st.divider()
     
-    # GPS Schnittstelle
-    st.subheader("📍 Live-Ortung")
-    if st.button("🛰️ GPS-Standort abrufen", use_container_width=True):
-        geo_data = get_geolocation()
-        if geo_data:
-            st.session_state.gps_coords = (
-                geo_data['coords']['latitude'], 
-                geo_data['coords']['longitude']
-            )
-            st.success("Standort fixiert!")
-        else:
-            st.error("Kein Signal. Bitte Berechtigung prüfen.")
+    # --- GPS FIX SEKTION (Globaler Aufruf für Browser-Berechtigung) ---
+    st.subheader("📍 Standort-Ermittlung")
+    
+    # Dieser Call triggert das JavaScript-Event für das GPS-Modul
+    current_loc = get_geolocation()
+    
+    if current_loc:
+        st.success("✅ GPS-Signal aktiv")
+        lat_found = current_loc['coords']['latitude']
+        lon_found = current_loc['coords']['longitude']
+        st.caption(f"Aktuelle Pos: {lat_found:.4f}, {lon_found:.4f}")
+        
+        if st.button("📍 Standort als Startpunkt setzen", use_container_width=True):
+            st.session_state.gps_coords = (lat_found, lon_found)
+            st.rerun()
+    else:
+        st.warning("⚠️ GPS wird gesucht...")
+        st.info("Falls blockiert: 'Standort' im Browser freigeben und Seite neu laden.")
+        if st.button("🔄 GPS-Suche erneuern"):
+            st.rerun()
 
     st.divider()
     
-    # Parameter
-    st.subheader("Fahrzeug-Parameter")
+    # Berechnungsparameter
+    st.subheader("Analyse-Parameter")
     ab_aufschlag = st.number_input("Autobahn-Aufschlag (€)", value=0.25, step=0.01)
     max_umweg = st.slider("Max. Umweg (Minuten)", 0, 45, 12)
-    tank_füllung = st.slider("Aktueller Tank (%)", 0, 100, 25)
-    sprit_typ = st.selectbox("Kraftstoff", ["Super E5", "Super E10"])
+    tank_füllung = st.slider("Aktueller Tankstand (%)", 0, 100, 25)
+    sprit_typ = st.selectbox("Kraftstoff-Sorte", ["Super E5", "Super E10"])
     api_typ = "e5" if sprit_typ == "Super E5" else "e10"
-    anzahl_personen = st.number_input("Personen", 1, 7, 2)
+    personen_anzahl = st.number_input("Personen an Bord", 1, 7, 2)
     
     st.markdown("---")
-    st.caption("Engine: V6.19.5-ULTRA-FULL")
+    st.caption("Engine: V6.19.6-FULL-GPS")
 
 # --- 5. HAUPTSEITE EINGABE ---
-st.title("🚐 Alhambra Fuel Master")
-st.info("Präzise Kraftstoff-Analyse für Seat Alhambra 2.0 TSI (7N)")
+st.title("🚐 Alhambra Fuel Master Mobile")
+st.markdown("---")
 
-col_l, col_r = st.columns(2)
+col_start, col_ziel = st.columns(2)
 
-# Startpunkt Logik
+# Startpunkt Logik (GPS Priorisierung)
 if 'gps_coords' in st.session_state:
-    start_val = f"{st.session_state.gps_coords[0]}, {st.session_state.gps_coords[1]}"
-    start_point = col_l.text_input("📍 Startpunkt (GPS aktiv)", value=start_val)
+    gps_val = f"{st.session_state.gps_coords[0]}, {st.session_state.gps_coords[1]}"
+    start_point = col_start.text_input("📍 Startpunkt (GPS-Modus)", value=gps_val)
 else:
-    start_point = col_l.text_input("📍 Startpunkt (Adresse)", value=saved_data.get("last_start", "Bensheim"))
+    start_point = col_start.text_input("📍 Startpunkt (Adresse)", value=saved_data.get("last_start", "Bensheim"))
 
-ziel_point = col_r.text_input("🏁 Zielort (Adresse)", value=saved_data.get("last_target", "München"))
+ziel_point = col_ziel.text_input("🏁 Zielort (Adresse)", value=saved_data.get("last_target", "München"))
 
 # --- 6. CORE CALCULATION ENGINE ---
 if st.button("🚀 Tiefen-Analyse starten", use_container_width=True):
     if not tk_key:
-        st.error("Fehler: API-Key fehlt in der Sidebar!")
+        st.error("Fehler: Bitte Tankerkönig API-Key in der Sidebar eintragen!")
     else:
         with st.status("Alhambra-Engine berechnet...", expanded=True) as status:
             
-            # A. Geokodierung
-            status.write("🌐 Ermittle Koordinaten...")
+            # A. Geokodierung der Punkte
+            status.write("🌐 Koordinaten werden aufgelöst...")
             if 'gps_coords' in st.session_state and start_point.startswith(str(st.session_state.gps_coords[0])[:5]):
                 s_coords = st.session_state.gps_coords
             else:
@@ -212,19 +217,18 @@ if st.button("🚀 Tiefen-Analyse starten", use_container_width=True):
             t_coords = engine.get_coords_cached(ziel_point)
             
             if s_coords and t_coords:
-                # B. Referenzroute berechnen
-                status.write("🛣️ Erstelle Referenzroute (Direktfahrt)...")
+                # B. Referenzroute (Direktfahrt)
+                status.write("🛣️ Berechne TSI-Referenzroute...")
                 route_direkt = engine.get_route([s_coords, t_coords])
                 
                 if route_direkt:
                     d_zeit = route_direkt['duration']
                     d_dist = route_direkt['distance']
-                    d_verbrauch = engine.berechne_verbrauch(d_dist, d_zeit, anzahl_personen)
-                    # Hauptroute dekodieren für Korridor-Check
-                    main_path = polyline.decode(route_direkt['geometry'])
+                    d_verbrauch_ref = engine.berechne_verbrauch(d_dist, d_zeit, personen_anzahl)
+                    path_poly = polyline.decode(route_direkt['geometry'])
                     
-                    # C. Tankerkönig API Abfrage
-                    status.write("📡 Suche Preise im 25km Umkreis...")
+                    # C. Preis-Scan über Tankerkönig
+                    status.write("📡 Scanne Echtzeit-Preise im Umkreis...")
                     tk_url = (
                         f"https://creativecommons.tankerkoenig.de/json/list.php?"
                         f"lat={s_coords[0]}&lng={s_coords[1]}&rad=25&sort=dist"
@@ -237,153 +241,120 @@ if st.button("🚀 Tiefen-Analyse starten", use_container_width=True):
                     except:
                         stationen = []
                     
-                    # D. Wirtschaftlichkeits-Berechnung
-                    # Wir ermitteln den Autobahn-Durchschnittspreis als Referenz
-                    preise_umgebung = [s['price'] for s in stationen if s.get('price')]
-                    if preise_umgebung:
-                        avg_umgebung = sum(preise_umgebung) / len(preise_umgebung)
-                        ref_preis_autobahn = avg_umgebung + ab_aufschlag
-                    else:
-                        ref_preis_autobahn = 2.25 # Fallback
+                    # Ermittlung der Preis-Benchmarks
+                    preise_umkreis = [s['price'] for s in stationen if s.get('price')]
+                    ref_preis_ab = (sum(preise_umkreis)/len(preise_umkreis) + ab_aufschlag) if preise_umkreis else 2.25
                     
-                    status.write(f"⚖️ Autobahn-Referenzpreis: {format_de(ref_preis_autobahn, 3)} €")
+                    status.write(f"⚖️ Analyse läuft (Autobahn-Ref: {format_de(ref_preis_ab, 3)} €)...")
                     
-                    gefundene_treffer = []
-                    korridor_punkte = main_path[::12] # Jeden 12. Punkt prüfen
-                    fortschritt = st.progress(0)
+                    ergebnisse = []
+                    korridor_check = path_poly[::12] # Stichproben alle ~10km
+                    p_bar = st.progress(0)
                     
-                    for i, stat in enumerate(stationen):
-                        fortschritt.progress((i+1) / len(stationen))
+                    # D. Umweg-Wirtschaftlichkeits-Check
+                    for idx_s, stat in enumerate(stationen):
+                        p_bar.progress((idx_s + 1) / len(stationen))
                         if not stat.get('isOpen') or not stat.get('price'):
                             continue
                         
-                        # Prüfen, ob die Tankstelle in der Nähe der Route liegt
-                        in_korridor = False
-                        for p in korridor_punkte:
-                            dist_lat_lng = math.sqrt(
-                                (stat['lat'] - p[0])**2 + (stat['lng'] - p[1])**2
-                            )
-                            if dist_lat_lng < 0.11: # ca. 10km
-                                in_korridor = True
-                                break
+                        # Liegt die Station grob auf dem Weg?
+                        is_near_route = any(
+                            math.sqrt((stat['lat'] - p[0])**2 + (stat['lng'] - p[1])**2) < 0.11 
+                            for p in korridor_check
+                        )
                         
-                        if in_korridor:
-                            # Umweg-Routing berechnen
+                        if is_near_route:
+                            # Präzises Routing über die Station
                             u_route = engine.get_route([s_coords, (stat['lat'], stat['lng']), t_coords])
                             if u_route:
-                                u_min = (u_route['duration'] - d_zeit) / 60
-                                if u_min <= max_umweg:
-                                    # TSI Physik anwenden
-                                    u_verb = engine.berechne_verbrauch(u_route['distance'], u_route['duration'], anzahl_personen)
-                                    # Zu tankende Menge (70L Tank abzüglich aktuellem Stand)
-                                    liter_zu_tanken = 70.0 * (1 - (tank_füllung/100))
+                                u_min_delta = (u_route['duration'] - d_zeit) / 60
+                                if u_min_delta <= max_umweg:
+                                    # TSI Physik für die Umweg-Route
+                                    u_verbrauch = engine.berechne_verbrauch(u_route['distance'], u_route['duration'], personen_anzahl)
+                                    # Tankmenge berechnen
+                                    liter_menge = 70.0 * (1 - (tank_füllung / 100))
                                     
-                                    # Kostenrechnung
-                                    ersparnis_brutto = (ref_preis_autobahn - stat['price']) * liter_zu_tanken
-                                    kosten_umweg = (u_verb - d_verbrauch) * stat['price']
-                                    vorteil_netto = ersparnis_brutto - kosten_umweg
+                                    # Wirtschaftlicher Vorteil
+                                    ersparnis_preis = (ref_preis_ab - stat['price']) * liter_menge
+                                    mehrkosten_sprit = (u_verbrauch - d_verbrauch_ref) * stat['price']
+                                    netto_vorteil = ersparnis_preis - mehrkosten_sprit
                                     
-                                    gefundene_treffer.append({
-                                        "Marke": stat['brand'],
-                                        "Preis": stat['price'],
-                                        "Netto": vorteil_netto,
-                                        "Umweg_M": u_min,
+                                    ergebnisse.append({
+                                        "Marke": stat['brand'], 
+                                        "Preis": stat['price'], 
+                                        "Netto": netto_vorteil,
+                                        "Umweg_M": u_min_delta, 
                                         "Umweg_K": (u_route['distance'] - d_dist) / 1000,
-                                        "L_Mehr": (u_verb - d_verbrauch),
-                                        "Kosten_T": liter_zu_tanken * stat['price'],
-                                        "lat": stat['lat'],
-                                        "lon": stat['lng'],
-                                        "geom": u_route['geometry'],
-                                        "Strasse": stat.get('street', 'k.A.')
+                                        "L_Mehr": (u_verbrauch - d_verbrauch_ref), 
+                                        "Kosten_T": liter_menge * stat['price'],
+                                        "lat": stat['lat'], "lon": stat['lng'], 
+                                        "geom": u_route['geometry'], "Strasse": stat.get('street', 'k.A.')
                                     })
                     
-                    # Ergebnisse sortieren und sichern
-                    st.session_state.results = sorted(gefundene_treffer, key=lambda x: x['Netto'], reverse=True)
-                    
-                    # Config Update
+                    # Resultate sichern und Rerun triggern für UI-Update
+                    st.session_state.results = sorted(ergebnisse, key=lambda x: x['Netto'], reverse=True)
                     saved_data.update({"last_start": start_point, "last_target": ziel_point})
                     save_config(saved_data)
                     
-                    status.update(label="Analyse erfolgreich!", state="complete", expanded=False)
-                    # WICHTIG: Rerun erzwingen um Session State Anzeige zu aktualisieren
-                    time.sleep(0.5)
+                    status.update(label="Analyse abgeschlossen!", state="complete", expanded=False)
                     st.rerun()
                 else:
-                    st.error("Route konnte nicht berechnet werden.")
+                    st.error("Routing-Fehler (OSRM antwortet nicht korrekt).")
             else:
-                st.error("Koordinaten konnten nicht gefunden werden.")
+                st.error("Geokodierung fehlgeschlagen. Bitte Adressen prüfen.")
 
-# --- 7. ERGEBNIS-ANZEIGE ---
+# --- 7. ERGEBNIS-PRÄSENTATION ---
 if st.session_state.results is not None:
-    all_res = st.session_state.results
-    if not all_res:
-        st.warning("Keine Stationen innerhalb der Umweg-Parameter gefunden.")
+    res_list = st.session_state.results
+    if not res_list:
+        st.warning("Keine Stationen gefunden, die die Umweg-Kriterien erfüllen.")
     else:
-        st.subheader("🏁 Tank-Empfehlungen")
+        st.subheader("🏁 Tankstellen-Empfehlungen")
         
-        # Dropdown zur Auswahl der Station
-        station_labels = [f"{i+1}. {r['Marke']} ({format_de(r['Preis'], 3)} €)" for i, r in enumerate(all_res)]
-        auswahl_idx = st.selectbox("Station im Detail anzeigen:", range(len(all_res)), format_func=lambda x: station_labels[x])
+        # Selektor für die Detailansicht
+        select_labels = [f"{i+1}. {r['Marke']} ({format_de(r['Preis'], 3)} €) - Vorteil: {format_de(r['Netto'])} €" for i, r in enumerate(res_list)]
+        final_idx = st.selectbox("Detail-Ansicht wählen:", range(len(res_list)), format_func=lambda x: select_labels[x])
         
-        station_sel = all_res[auswahl_idx]
+        sel_station = res_list[final_idx]
         
-        # Dashboard-Metriken
-        m1, m2, m3, m4, m5 = st.columns(5)
-        m1.metric("Netto-Vorteil", f"{format_de(station_sel['Netto'])} €")
-        m2.metric("Preis pro Liter", f"{format_de(station_sel['Preis'], 3)} €")
-        m3.metric("Zeit-Umweg", f"{format_de(station_sel['Umweg_M'], 1)} Min")
-        m4.metric("Mehrverbrauch", f"{format_de(station_sel['L_Mehr'], 2)} L")
-        m5.metric("Gesamtpreis", f"{format_de(station_sel['Kosten_T'])} €")
+        # Metriken Dashboard
+        met1, met2, met3, met4, met5 = st.columns(5)
+        met1.metric("Netto-Vorteil", f"{format_de(sel_station['Netto'])} €")
+        met2.metric("Preis / L", f"{format_de(sel_station['Preis'], 3)} €")
+        met3.metric("Umweg (Zeit)", f"{format_de(sel_station['Umweg_M'], 1)} Min")
+        met4.metric("Mehrverbrauch", f"{format_de(sel_station['L_Mehr'], 2)} L")
+        met5.metric("Gesamtkosten", f"{format_de(sel_station['Kosten_T'])} €")
         
         st.divider()
         
-        # Karte und Info
-        c_map, c_text = st.columns([2, 1])
-        with c_text:
-            st.success(f"**Station:** {station_sel['Marke']}\n\n**Adresse:** {station_sel['Strasse']}")
-            st.info("Die Route zeigt die Anfahrt inklusive Umweg zum Ziel.")
-        
-        with c_map:
-            # Pydeck Visualisierung
+        # Karte und Standort-Info
+        map_col, text_col = st.columns([2, 1])
+        with text_col:
+            st.success(f"**Gewählte Station:**\n{sel_station['Marke']}\n\n{sel_station['Strasse']}")
+            if final_idx > 0:
+                diff = res_list[0]['Netto'] - sel_station['Netto']
+                st.warning(f"💡 Platz 1 ist {format_de(diff)} € lukrativer.")
+
+        with map_col:
             st.pydeck_chart(pdk.Deck(
                 map_style="light",
-                initial_view_state=pdk.ViewState(
-                    latitude=station_sel['lat'], 
-                    longitude=station_sel['lon'], 
-                    zoom=13,
-                    pitch=45
-                ),
+                initial_view_state=pdk.ViewState(latitude=sel_station['lat'], longitude=sel_station['lon'], zoom=13),
                 layers=[
-                    pdk.Layer(
-                        "PathLayer", 
-                        [{"path": [[p[1], p[0]] for p in polyline.decode(station_sel['geom'])]}],
-                        get_path="path", 
-                        get_color=[255, 100, 0, 180], 
-                        width_min_pixels=5
-                    ),
-                    pdk.Layer(
-                        "ScatterplotLayer", 
-                        [station_sel], 
-                        get_position="[lon, lat]", 
-                        get_color=[255, 0, 0, 255], 
-                        get_radius=200
-                    )
+                    pdk.Layer("PathLayer", [{"path": [[p[1], p[0]] for p in polyline.decode(sel_station['geom'])]}], get_path="path", get_color=[255, 100, 0, 180], width_min_pixels=5),
+                    pdk.Layer("ScatterplotLayer", [sel_station], get_position="[lon, lat]", get_color=[255, 0, 0, 255], get_radius=200)
                 ]
             ))
         
-        # Rangliste
-        st.subheader("📋 Alle Treffer im Überblick")
-        liste_final = []
-        for i, r in enumerate(all_res):
-            liste_final.append({
-                "Rang": i+1,
-                "Marke": r['Marke'],
-                "Preis (€)": format_de(r['Preis'], 3),
-                "Ersparnis (€)": format_de(r['Netto']),
-                "Umweg (Min)": format_de(r['Umweg_M'], 1),
-                "Tanksumme (€)": format_de(r['Kosten_T'])
+        # Tabellarische Übersicht
+        st.subheader("📋 Gesamtranking")
+        table_final = []
+        for i, r in enumerate(res_list):
+            table_final.append({
+                "Rang": i+1, "Marke": r['Marke'], 
+                "Preis (€)": format_de(r['Preis'], 3), 
+                "Vorteil (€)": format_de(r['Netto']), 
+                "Umweg (Min)": format_de(r['Umweg_M'], 1)
             })
-        st.table(pd.DataFrame(liste_final).set_index("Rang"))
-
+        st.table(pd.DataFrame(table_final).set_index("Rang"))
 else:
-    st.write("Bereit für die Analyse. Bitte oben auf 'Analyse starten' klicken.")
+    st.write("Warte auf Eingabe der Route und Analyse-Start...")
