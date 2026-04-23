@@ -14,7 +14,7 @@ from streamlit_js_eval import streamlit_js_eval, get_geolocation
 
 # --- 1. DATENMANAGEMENT & KONFIGURATION ---
 # Eindeutiger Dateiname für diese Version zur Vermeidung von Cache-Konflikten
-CONFIG_FILE = "alhambra_tsi_v6196_gps_fix_full.json"
+CONFIG_FILE = "alhambra_tsi_v6197_gps_fix_full.json"
 
 def save_config(config_data):
     """Speichert Benutzereinstellungen wie den API-Key lokal auf der Instanz."""
@@ -55,7 +55,7 @@ class AlhambraTSIMasterMobile:
         self.cw_wert = 0.32
         # Dynamischer User-Agent für Cloud-Umgebungen zur Vermeidung von IP-Sperren
         timestamp_id = int(time.time())
-        self.geolocator = Nominatim(user_agent=f"alhambra_tsi_enforcer_v6196_{timestamp_id}")
+        self.geolocator = Nominatim(user_agent=f"alhambra_tsi_enforcer_v6197_{timestamp_id}")
 
     def berechne_verbrauch(self, dist_m, dauer_s, personen):
         """
@@ -118,7 +118,7 @@ class AlhambraTSIMasterMobile:
 
 # --- 3. STREAMLIT UI SETUP ---
 st.set_page_config(
-    page_title="Alhambra TSI Pro V6.19.6",
+    page_title="Alhambra TSI Pro V6.19.7",
     layout="wide",
     page_icon="🚐"
 )
@@ -150,10 +150,9 @@ with st.sidebar:
     
     st.divider()
     
-    # --- GPS FIX SEKTION (Globaler Aufruf für Browser-Berechtigung) ---
+    # --- GPS FIX SEKTION ---
     st.subheader("📍 Standort-Ermittlung")
     
-    # Dieser Call triggert das JavaScript-Event für das GPS-Modul
     current_loc = get_geolocation()
     
     if current_loc:
@@ -176,14 +175,17 @@ with st.sidebar:
     # Berechnungsparameter
     st.subheader("Analyse-Parameter")
     ab_aufschlag = st.number_input("Autobahn-Aufschlag (€)", value=0.25, step=0.01)
-    max_umweg = st.slider("Max. Umweg (Minuten)", 0, 45, 12)
+    
+    # Konfiguration gemäß Vorgabe: 0-15 Min, Standard 5 Min
+    max_umweg = st.slider("Max. Umweg (Minuten)", 0, 15, 5)
+    
     tank_füllung = st.slider("Aktueller Tankstand (%)", 0, 100, 25)
     sprit_typ = st.selectbox("Kraftstoff-Sorte", ["Super E5", "Super E10"])
     api_typ = "e5" if sprit_typ == "Super E5" else "e10"
     personen_anzahl = st.number_input("Personen an Bord", 1, 7, 2)
     
     st.markdown("---")
-    st.caption("Engine: V6.19.6-FULL-GPS")
+    st.caption("Engine: V6.19.7-FULL-GPS")
 
 # --- 5. HAUPTSEITE EINGABE ---
 st.title("🚐 Alhambra Fuel Master Mobile")
@@ -307,7 +309,7 @@ if st.button("🚀 Tiefen-Analyse starten", use_container_width=True):
 if st.session_state.results is not None:
     res_list = st.session_state.results
     if not res_list:
-        st.warning("Keine Stationen gefunden, die die Umweg-Kriterien erfüllen.")
+        st.warning("Keine passenden Stationen gefunden.")
     else:
         st.subheader("🏁 Tankstellen-Empfehlungen")
         
